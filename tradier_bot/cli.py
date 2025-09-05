@@ -188,7 +188,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     p = sub.add_parser("live-run", help="Live sandbox runner: momentum+breakout+sentiment with TP/SL and liquidity checks")
     p.add_argument("account", help="Account ID")
-    p.add_argument("symbols", help="CSV of underlyings, e.g., SPY,QQQ,AAPL")
+    p.add_argument("symbols", nargs="?", default="", help="CSV of underlyings, e.g., SPY,QQQ,AAPL")
+    p.add_argument("--symbols-file", default=None, help="Path to newline or comma-separated symbols file")
     p.add_argument("--minutes", type=int, default=30)
     p.add_argument("--poll", type=int, default=30)
     p.add_argument("--tp", type=float, default=0.25)
@@ -204,6 +205,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     def _live(a):
         client = build_client()
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
+        if a.symbols_file:
+            try:
+                with open(a.symbols_file, 'r') as f:
+                    content = f.read()
+                extra = [s.strip().upper() for s in content.replace('\n', ',').split(',') if s.strip()]
+                syms = list(dict.fromkeys(syms + extra))
+            except Exception as e:
+                print({"warn": f"Failed to read symbols file: {e}"})
         LiveRunner(
             client, a.account, syms, a.capital, a.minutes, a.poll, a.tp, a.sl,
             a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent
