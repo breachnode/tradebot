@@ -8,6 +8,7 @@ from .http import HttpClient
 from .tradier import TradierClient
 from .runner import PaperRunner
 from .live_runner import LiveRunner
+from .symbols_sync import load_symbols_from_file, cross_reference_optionable
 
 
 def build_client() -> TradierClient:
@@ -218,6 +219,19 @@ def main(argv: Optional[list[str]] = None) -> int:
             a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent
         ).run()
     p.set_defaults(func=_live)
+
+    p = sub.add_parser("symbols-sync", help="Cross-reference TradingView list with Tradier optionability")
+    p.add_argument("file", help="Path to symbols file (newline or CSV)")
+    p.add_argument("--limit", type=int, default=200, help="Max symbols to check")
+    p.add_argument("--sleep", type=float, default=0.3, help="Seconds between calls")
+    def _sync(a):
+        client = build_client()
+        syms = load_symbols_from_file(a.file)
+        optionable, not_optionable = cross_reference_optionable(client, syms, limit=a.limit, sleep_seconds=a.sleep)
+        print({"counts": {"optionable": len(optionable), "not_optionable": len(not_optionable)}})
+        print({"optionable": optionable[:50] + (["..."] if len(optionable) > 50 else [])})
+        print({"not_optionable": not_optionable[:50] + (["..."] if len(not_optionable) > 50 else [])})
+    p.set_defaults(func=_sync)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
     p.add_argument("account", help="Account ID")
