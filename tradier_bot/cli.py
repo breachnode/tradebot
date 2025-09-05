@@ -186,7 +186,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         PaperRunner(client, a.symbol, a.account, a.minutes, a.poll, a.tp, a.sl, a.capital).run()
     p.set_defaults(func=_run)
 
-    p = sub.add_parser("live-run", help="Live sandbox runner: multi-symbol momentum with TP/SL")
+    p = sub.add_parser("live-run", help="Live sandbox runner: momentum+breakout+sentiment with TP/SL and liquidity checks")
     p.add_argument("account", help="Account ID")
     p.add_argument("symbols", help="CSV of underlyings, e.g., SPY,QQQ,AAPL")
     p.add_argument("--minutes", type=int, default=30)
@@ -196,10 +196,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--capital", type=float, default=100.0)
     p.add_argument("--maxpos", type=int, default=1)
     p.add_argument("--delta", type=float, default=0.30)
+    p.add_argument("--aggr", type=float, default=0.6, help="Aggressiveness 0-1 (higher = more trades)")
+    p.add_argument("--min-oi", type=int, default=50, help="Minimum open interest")
+    p.add_argument("--max-spread", type=float, default=0.25, help="Max absolute spread ($)")
+    p.add_argument("--max-spread-pct", type=float, default=0.35, help="Max spread as % of ask")
+    p.add_argument("--min-sent", type=int, default=1, help="Min StockTwits sentiment score magnitude")
     def _live(a):
         client = build_client()
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
-        LiveRunner(client, a.account, syms, a.capital, a.minutes, a.poll, a.tp, a.sl, a.maxpos, a.delta).run()
+        LiveRunner(
+            client, a.account, syms, a.capital, a.minutes, a.poll, a.tp, a.sl,
+            a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent
+        ).run()
     p.set_defaults(func=_live)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")

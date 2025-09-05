@@ -8,6 +8,7 @@ import statistics
 import yfinance as yf
 
 from .tradier import TradierClient
+from .sources import fetch_stocktwits_sentiment_score
 
 
 @dataclass
@@ -33,6 +34,11 @@ class LiveRunner:
         sl_pct: float = 0.20,
         max_positions: int = 1,
         target_delta: float = 0.30,
+        aggressiveness: float = 0.5,
+        min_open_interest: int = 50,
+        max_spread_abs: float = 0.25,
+        max_spread_pct: float = 0.35,
+        min_sentiment_score: int = 1,
     ) -> None:
         self.client = client
         self.account_id = account_id
@@ -45,6 +51,11 @@ class LiveRunner:
         self.max_positions = max_positions
         self.target_delta = target_delta
         self.positions: List[LivePosition] = []
+        self.aggressiveness = max(0.0, min(1.0, aggressiveness))
+        self.min_open_interest = min_open_interest
+        self.max_spread_abs = max_spread_abs
+        self.max_spread_pct = max_spread_pct
+        self.min_sentiment_score = min_sentiment_score
 
     # Data helpers
     def _yahoo_prices(self, symbol: str, minutes: int = 20) -> List[float]:
@@ -64,11 +75,43 @@ class LiveRunner:
             return None
         short = statistics.fmean(closes[-3:])
         long = statistics.fmean(closes[-9:])
-        if short > long * 1.001:
+        # Lower threshold when aggressiveness is higher
+        up_thresh = 1.0 + (0.001 * (1.0 - self.aggressiveness))
+        down_thresh = 1.0 - (0.001 * (1.0 - self.aggressiveness))
+        if short > long * up_thresh:
             return "call"
-        if short < long * 0.999:
+        if short < long * down_thresh:
             return "put"
         return None
+
+    def _breakout_signal(self, symbol: str) -> Optional[str]:
+        closes = self._yahoo_prices(symbol)
+        if len(closes) < 15:
+            return None
+        last = closes[-1]
+        recent_high = max(closes[-15:])
+        recent_low = min(closes[-15:])
+        # Make breakout easier with higher aggressiveness
+        breakout_pad = 0.0005 * (1.0 - self.aggressiveness)
+        if last >= recent_high * (1.0 - breakout_pad):
+            return "call"
+        if last <= recent_low * (1.0 + breakout_pad):
+            return "put"
+        return None
+
+    def _liquidity_ok(self, occ_symbol: str) -> bool:
+        q = self.client.get_quote(occ_symbol)
+        quote = (q.get("quotes") or {}).get("quote") or {}
+        if isinstance(quote, list) and quote:
+            quote = quote[0]
+        bid = float(quote.get("bid") or 0.0)
+        ask = float(quote.get("ask") or 0.0)
+        oi = int(quote.get("open_interest") or 0)
+        if ask <= 0.0:
+            return False
+        spread = ask - bid
+        spread_ok = (spread <= self.max_spread_abs) or (spread / ask <= self.max_spread_pct)
+        return oi >= self.min_open_interest and spread_ok
 
     def _pick_option(self, symbol: str, direction: str) -> Optional[str]:
         exps = self.client.get_options_expirations(symbol)
@@ -82,8 +125,8 @@ class LiveRunner:
         options = chain.get("options", {}).get("option", [])
         if not options:
             return None
-        best = None
-        best_diff = 1e9
+        # Filter by liquidity first if fields available
+        candidates = []
         for o in options:
             g = o.get("greeks") or {}
             d = g.get("delta")
@@ -93,12 +136,29 @@ class LiveRunner:
                 continue
             if direction == "put" and d >= 0:
                 continue
+            # Basic quote data in chain
+            bid = float(o.get("bid") or 0.0)
+            ask = float(o.get("ask") or 0.0)
+            oi = int(o.get("open_interest") or 0)
+            if ask <= 0.0:
+                continue
+            spread = ask - bid
+            spread_ok = (spread <= self.max_spread_abs) or (spread / ask <= self.max_spread_pct)
+            if oi >= self.min_open_interest and spread_ok:
+                candidates.append(o)
+        pool = candidates if candidates else options
+        best = None
+        best_diff = 1e9
+        for o in pool:
+            d = (o.get("greeks") or {}).get("delta")
+            if d is None:
+                continue
             diff = abs(abs(d) - self.target_delta)
             if diff < best_diff:
                 best = o
                 best_diff = diff
         if not best:
-            best = options[0]
+            best = pool[0]
         return best.get("symbol") or best.get("option_symbol")
 
     def _option_mid(self, occ_symbol: str) -> Optional[float]:
@@ -210,9 +270,20 @@ class LiveRunner:
             # Entry logic if capacity available
             if len(self.positions) < self.max_positions:
                 for sym in self.symbols:
-                    signal = self._momentum_signal(sym)
+                    # Combine signals: momentum + breakout, then sentiment filter
+                    mom = self._momentum_signal(sym)
+                    brk = self._breakout_signal(sym)
+                    signal = mom or brk
                     if not signal:
                         continue
+                    sent = fetch_stocktwits_sentiment_score(sym)
+                    if abs(sent) < self.min_sentiment_score:
+                        continue
+                    # Align sentiment sign with direction when possible
+                    if (signal == "call" and sent < 0) or (signal == "put" and sent > 0):
+                        # if aggressive, allow misalignment occasionally
+                        if self.aggressiveness < 0.7:
+                            continue
                     pos = self._place_buy(sym, signal)
                     if pos:
                         self.positions.append(pos)
