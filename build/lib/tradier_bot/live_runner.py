@@ -39,6 +39,7 @@ class LiveRunner:
         max_spread_abs: float = 0.25,
         max_spread_pct: float = 0.35,
         min_sentiment_score: int = 1,
+        reinvestment_rate: float = 0.5,
     ) -> None:
         self.client = client
         self.account_id = account_id
@@ -56,6 +57,7 @@ class LiveRunner:
         self.max_spread_abs = max_spread_abs
         self.max_spread_pct = max_spread_pct
         self.min_sentiment_score = min_sentiment_score
+        self.reinvest = max(0.0, min(1.0, reinvestment_rate))
 
     # Data helpers
     def _yahoo_prices(self, symbol: str, minutes: int = 20) -> List[float]:
@@ -181,17 +183,29 @@ class LiveRunner:
             return None
         mid = self._option_mid(occ) or 0.01
         price = max(0.01, round(mid, 2))
-        cost = price * 100.0
-        if self.cash < cost:
-            print({"skip": {"symbol": symbol, "reason": "insufficient_cash", "cash": round(self.cash,2), "needed": cost}})
+        cost_per_contract = price * 100.0
+        if self.cash < cost_per_contract:
+            print({"skip": {"symbol": symbol, "reason": "insufficient_cash", "cash": round(self.cash,2), "needed": cost_per_contract}})
             return None
+        # Determine quantity using reinvestment fraction of current cash
+        target_allocation = self.cash * self.reinvest
+        qty = int(target_allocation // cost_per_contract)
+        if qty < 1:
+            qty = 1
+        spend = qty * cost_per_contract
+        if spend > self.cash:
+            qty = int(self.cash // cost_per_contract)
+            if qty < 1:
+                print({"skip": {"symbol": symbol, "reason": "insufficient_cash_after_size", "cash": round(self.cash,2)}})
+                return None
+            spend = qty * cost_per_contract
         # Preview -> place
         self.client.preview_option_order(
             account_id=self.account_id,
             underlying_symbol=symbol,
             option_symbol=occ,
             side="buy_to_open",
-            quantity=1,
+            quantity=qty,
             price=price,
             order_type="limit",
             duration="day",
@@ -201,15 +215,15 @@ class LiveRunner:
             underlying_symbol=symbol,
             option_symbol=occ,
             side="buy_to_open",
-            quantity=1,
+            quantity=qty,
             price=price,
             order_type="limit",
             duration="day",
         )
         order_id = (placed.get("order") or {}).get("id") or placed.get("id")
-        pos = LivePosition(symbol=symbol, direction=direction, occ_symbol=occ, quantity=1, entry_price=price, order_id=str(order_id) if order_id else None)
-        self.cash -= cost
-        print({"buy": {"symbol": symbol, "occ": occ, "price": price, "order_id": order_id, "cash_after": round(self.cash,2)}})
+        pos = LivePosition(symbol=symbol, direction=direction, occ_symbol=occ, quantity=qty, entry_price=price, order_id=str(order_id) if order_id else None)
+        self.cash -= spend
+        print({"buy": {"symbol": symbol, "occ": occ, "price": price, "qty": qty, "order_id": order_id, "cash_after": round(self.cash,2)}})
         return pos
 
     def _try_close(self, pos: LivePosition, reason: str) -> bool:

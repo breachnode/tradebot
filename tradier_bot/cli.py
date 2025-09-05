@@ -204,6 +204,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--max-spread", type=float, default=0.25, help="Max absolute spread ($)")
     p.add_argument("--max-spread-pct", type=float, default=0.35, help="Max spread as % of ask")
     p.add_argument("--min-sent", type=int, default=1, help="Min StockTwits sentiment score magnitude")
+    p.add_argument("--reinvest", type=float, default=0.5, help="Fraction of cash to reinvest per entry (0-1)")
     def _live(a):
         client = build_client()
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
@@ -217,7 +218,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print({"warn": f"Failed to read symbols file: {e}"})
         LiveRunner(
             client, a.account, syms, a.capital, a.minutes, a.poll, a.tp, a.sl,
-            a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent
+            a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent, a.reinvest
         ).run()
     p.set_defaults(func=_live)
 
