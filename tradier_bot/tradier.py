@@ -77,6 +77,36 @@ class TradierClient:
         self._raise_for_status(r)
         return r.json()
 
+    def place_option_order(
+        self,
+        account_id: str,
+        option_symbol: str,
+        side: str,
+        quantity: int,
+        price: Optional[float] = None,
+        duration: str = "day",
+        order_type: str = "market",
+    ) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "class": "option",
+            "symbol": option_symbol,
+            "side": side,
+            "quantity": quantity,
+            "type": order_type,
+            "duration": duration,
+        }
+        if price is not None:
+            data["price"] = price
+
+        r = self.http.post_form(f"accounts/{account_id}/orders", data=data)
+        self._raise_for_status(r)
+        return r.json()
+
+    def cancel_order(self, account_id: str, order_id: str) -> Dict[str, Any]:
+        r = self.http.delete(f"accounts/{account_id}/orders/{order_id}")
+        self._raise_for_status(r)
+        return r.json()
+
     # Helpers
     @staticmethod
     def _raise_for_status(r):

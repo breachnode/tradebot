@@ -61,3 +61,6 @@ class HttpClient:
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         return self._request("POST", path, data=data, headers=headers)
 
+    def delete(self, path: str) -> requests.Response:
+        return self._request("DELETE", path)
+
