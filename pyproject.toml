@@ -1,0 +1,15 @@
+[project]
+name = "tradier-bot"
+version = "0.1.0"
+description = "Small-account options trading bot using Tradier API"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.32.3",
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+tradier = "tradier_bot.cli:main"
+
+[tool.setuptools]
+packages = ["tradier_bot"]

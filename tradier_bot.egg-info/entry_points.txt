@@ -1,0 +1,2 @@
+[console_scripts]
+tradier = tradier_bot.cli:main
