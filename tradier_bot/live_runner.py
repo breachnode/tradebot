@@ -40,6 +40,9 @@ class LiveRunner:
         max_spread_pct: float = 0.35,
         min_sentiment_score: int = 1,
         reinvestment_rate: float = 0.5,
+        reinvest_tier_threshold: float = 1000.0,
+        reinvest_rate_below: float = 1.0,
+        reinvest_rate_above: float = 0.5,
     ) -> None:
         self.client = client
         self.account_id = account_id
@@ -58,6 +61,9 @@ class LiveRunner:
         self.max_spread_pct = max_spread_pct
         self.min_sentiment_score = min_sentiment_score
         self.reinvest = max(0.0, min(1.0, reinvestment_rate))
+        self.reinvest_tier_threshold = max(0.0, reinvest_tier_threshold)
+        self.reinvest_rate_below = max(0.0, min(1.0, reinvest_rate_below))
+        self.reinvest_rate_above = max(0.0, min(1.0, reinvest_rate_above))
 
     # Data helpers
     def _yahoo_prices(self, symbol: str, minutes: int = 20) -> List[float]:
@@ -187,8 +193,9 @@ class LiveRunner:
         if self.cash < cost_per_contract:
             print({"skip": {"symbol": symbol, "reason": "insufficient_cash", "cash": round(self.cash,2), "needed": cost_per_contract}})
             return None
-        # Determine quantity using reinvestment fraction of current cash
-        target_allocation = self.cash * self.reinvest
+        # Determine dynamic reinvestment fraction using tiered logic
+        reinvest_frac = self.reinvest_rate_below if self.cash < self.reinvest_tier_threshold else self.reinvest_rate_above
+        target_allocation = self.cash * reinvest_frac
         qty = int(target_allocation // cost_per_contract)
         if qty < 1:
             qty = 1
@@ -223,7 +230,7 @@ class LiveRunner:
         order_id = (placed.get("order") or {}).get("id") or placed.get("id")
         pos = LivePosition(symbol=symbol, direction=direction, occ_symbol=occ, quantity=qty, entry_price=price, order_id=str(order_id) if order_id else None)
         self.cash -= spend
-        print({"buy": {"symbol": symbol, "occ": occ, "price": price, "qty": qty, "order_id": order_id, "cash_after": round(self.cash,2)}})
+        print({"buy": {"symbol": symbol, "occ": occ, "price": price, "qty": qty, "reinvest_frac": reinvest_frac, "order_id": order_id, "cash_after": round(self.cash,2)}})
         return pos
 
     def _try_close(self, pos: LivePosition, reason: str) -> bool:

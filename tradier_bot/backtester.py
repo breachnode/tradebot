@@ -54,6 +54,9 @@ class Backtester:
         base_entry_premium: float = 1.00,
         histories_override: Optional[Dict[str, Any]] = None,
         reinvestment_rate: float = 0.5,
+        reinvest_tier_threshold: float = 1000.0,
+        reinvest_rate_below: float = 1.0,
+        reinvest_rate_above: float = 0.5,
     ) -> None:
         self.symbols = symbols
         self.starting_capital = starting_capital
@@ -70,7 +73,10 @@ class Backtester:
         self.base_entry = max(0.01, base_entry_premium)
         self._histories = histories_override
         # Use at least 50% reinvestment, cap at 100%
-        self.reinvest = max(0.5, min(1.0, reinvestment_rate))
+        self.reinvest = max(0.0, min(1.0, reinvestment_rate))
+        self.reinvest_tier_threshold = max(0.0, reinvest_tier_threshold)
+        self.reinvest_rate_below = max(0.0, min(1.0, reinvest_rate_below))
+        self.reinvest_rate_above = max(0.0, min(1.0, reinvest_rate_above))
 
         self.cash = starting_capital
         self.positions: List[BtPosition] = []
@@ -213,7 +219,8 @@ class Backtester:
                     cost_per_contract = effective_entry * 100.0 + (self.commission + self.fees)
                     if self.cash < cost_per_contract:
                         continue
-                    target_allocation = self.cash * self.reinvest
+                    reinvest_frac = self.reinvest_rate_below if self.cash < self.reinvest_tier_threshold else self.reinvest_rate_above
+                    target_allocation = self.cash * reinvest_frac
                     qty = int(target_allocation // cost_per_contract)
                     if qty < 1:
                         qty = 1

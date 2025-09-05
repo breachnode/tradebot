@@ -204,7 +204,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--max-spread", type=float, default=0.25, help="Max absolute spread ($)")
     p.add_argument("--max-spread-pct", type=float, default=0.35, help="Max spread as % of ask")
     p.add_argument("--min-sent", type=int, default=1, help="Min StockTwits sentiment score magnitude")
-    p.add_argument("--reinvest", type=float, default=0.5, help="Fraction of cash to reinvest per entry (0-1)")
+    p.add_argument("--reinvest", type=float, default=0.5, help="Base reinvest fraction (used if no tiers)")
+    p.add_argument("--reinvest-th", type=float, default=1000.0, help="Tier threshold account cash ($)")
+    p.add_argument("--reinvest-below", type=float, default=1.0, help="Reinvest fraction below threshold")
+    p.add_argument("--reinvest-above", type=float, default=0.5, help="Reinvest fraction at/above threshold")
     def _live(a):
         client = build_client()
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
@@ -218,7 +221,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print({"warn": f"Failed to read symbols file: {e}"})
         LiveRunner(
             client, a.account, syms, a.capital, a.minutes, a.poll, a.tp, a.sl,
-            a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent, a.reinvest
+            a.maxpos, a.delta, a.aggr, a.min_oi, a.max_spread, a.max_spread_pct, a.min_sent,
+            a.reinvest, a.reinvest_th, a.reinvest_below, a.reinvest_above
         ).run()
     p.set_defaults(func=_live)
 
@@ -252,6 +256,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--exit-slip", type=float, default=0.05, help="Exit slippage fraction")
     p.add_argument("--entry-prem", type=float, default=1.00, help="Base entry premium per contract ($)")
     p.add_argument("--reinvest", type=float, default=0.5, help="Fraction of available cash to reinvest per trade (0.5-1.0)")
+    p.add_argument("--reinvest-th", type=float, default=1000.0, help="Tier threshold account cash ($)")
+    p.add_argument("--reinvest-below", type=float, default=1.0, help="Reinvest fraction below threshold")
+    p.add_argument("--reinvest-above", type=float, default=0.5, help="Reinvest fraction at/above threshold")
     def _bt(a):
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
         if a.symbols_file:
@@ -266,7 +273,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             syms, years=a.years, starting_capital=a.capital, tp_pct=a.tp, sl_pct=a.sl,
             target_delta=a.delta, max_positions=a.maxpos, max_hold_days=a.hold, aggressiveness=a.aggr,
             commission_per_contract=a.comm, fees_per_contract=a.fees, entry_slippage_frac=a.entry_slip, exit_slippage_frac=a.exit_slip,
-            base_entry_premium=a.entry_prem, reinvestment_rate=a.reinvest
+            base_entry_premium=a.entry_prem, reinvestment_rate=a.reinvest,
+            reinvest_tier_threshold=a.reinvest_th, reinvest_rate_below=a.reinvest_below, reinvest_rate_above=a.reinvest_above
         )
         stats = bt.run()
         print({
