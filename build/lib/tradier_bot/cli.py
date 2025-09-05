@@ -9,6 +9,7 @@ from .tradier import TradierClient
 from .runner import PaperRunner
 from .live_runner import LiveRunner
 from .symbols_sync import load_symbols_from_file, cross_reference_optionable
+from .backtester import Backtester
 
 
 def build_client() -> TradierClient:
@@ -232,6 +233,32 @@ def main(argv: Optional[list[str]] = None) -> int:
         print({"optionable": optionable[:50] + (["..."] if len(optionable) > 50 else [])})
         print({"not_optionable": not_optionable[:50] + (["..."] if len(not_optionable) > 50 else [])})
     p.set_defaults(func=_sync)
+
+    p = sub.add_parser("backtest", help="2-year backtest on Yahoo daily bars with $100 start")
+    p.add_argument("symbols", nargs="?", default="SPY,QQQ,AAPL,TSLA,NVDA,AMD")
+    p.add_argument("--years", type=int, default=2)
+    p.add_argument("--capital", type=float, default=100.0)
+    p.add_argument("--tp", type=float, default=0.25)
+    p.add_argument("--sl", type=float, default=0.20)
+    p.add_argument("--delta", type=float, default=0.30)
+    p.add_argument("--maxpos", type=int, default=1)
+    p.add_argument("--hold", type=int, default=10, help="Max hold days")
+    p.add_argument("--aggr", type=float, default=0.6)
+    def _bt(a):
+        syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
+        bt = Backtester(syms, years=a.years, starting_capital=a.capital, tp_pct=a.tp, sl_pct=a.sl, target_delta=a.delta, max_positions=a.maxpos, max_hold_days=a.hold, aggressiveness=a.aggr)
+        stats = bt.run()
+        print({
+            "starting_capital": stats.starting_capital,
+            "ending_cash": stats.ending_cash,
+            "realized_pnl": stats.realized_pnl,
+            "trades": stats.trades,
+            "wins": stats.wins,
+            "losses": stats.losses,
+            "max_drawdown_pct": stats.max_drawdown_pct,
+            "cagr_pct": stats.cagr_pct,
+        })
+    p.set_defaults(func=_bt)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
     p.add_argument("account", help="Account ID")

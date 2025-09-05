@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 tradier_bot/__init__.py
+tradier_bot/backtester.py
 tradier_bot/cli.py
 tradier_bot/config.py
 tradier_bot/http.py
