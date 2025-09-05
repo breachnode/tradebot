@@ -307,13 +307,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         for s in syms:
             preload[s] = tmp_bt._fetch_history(s)
         grids = {
-            "tp": [0.15, 0.20, 0.25],
-            "sl": [0.20, 0.30, 0.35],
-            "delta": [0.25, 0.30, 0.35],
-            "hold": [5, 10, 15],
-            "aggr": [0.6, 0.8, 0.95],
-            "entry": [0.60, 0.80, 1.00],
-            "reinv": [0.5, 0.75, 1.0],
+            "tp": [0.20, 0.25],
+            "sl": [0.25, 0.30],
+            "delta": [0.25, 0.30],
+            "hold": [5, 10],
+            "aggr": [0.8, 0.95],
+            "entry": [0.60, 0.80],
+            "reinv": [a.reinvest],
         }
         best = None
         best_stat = -1e9
