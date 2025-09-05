@@ -6,6 +6,7 @@ from typing import Optional
 from .config import load_config
 from .http import HttpClient
 from .tradier import TradierClient
+from .runner import PaperRunner
 
 
 def build_client() -> TradierClient:
@@ -170,6 +171,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("account", help="Account ID")
     p.add_argument("order_id", help="Order ID")
     p.set_defaults(func=lambda a: print(build_client().get_order_status(a.account, a.order_id)))
+
+    p = sub.add_parser("paper-run", help="Run 30m paper test using Yahoo & StockTwits")
+    p.add_argument("symbol", help="Underlying symbol, e.g., SPY")
+    p.add_argument("--account", default=None, help="Account ID (optional)")
+    p.add_argument("--minutes", type=int, default=30, help="Duration minutes")
+    p.add_argument("--poll", type=int, default=60, help="Poll seconds")
+    p.add_argument("--tp", type=float, default=0.25, help="Take profit percent")
+    p.add_argument("--sl", type=float, default=0.20, help="Stop loss percent")
+    def _run(a):
+        client = build_client()
+        PaperRunner(client, a.symbol, a.account, a.minutes, a.poll, a.tp, a.sl).run()
+    p.set_defaults(func=_run)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
     p.add_argument("account", help="Account ID")

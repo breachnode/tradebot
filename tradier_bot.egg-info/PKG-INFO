@@ -5,3 +5,4 @@ Summary: Small-account options trading bot using Tradier API
 Requires-Python: >=3.10
 Requires-Dist: requests>=2.32.3
 Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: yfinance>=0.2.52

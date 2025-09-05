@@ -4,6 +4,8 @@ tradier_bot/__init__.py
 tradier_bot/cli.py
 tradier_bot/config.py
 tradier_bot/http.py
+tradier_bot/runner.py
+tradier_bot/sources.py
 tradier_bot/tradier.py
 tradier_bot.egg-info/PKG-INFO
 tradier_bot.egg-info/SOURCES.txt

@@ -28,9 +28,14 @@ class TradierClient:
         self._raise_for_status(r)
         return r.json()
 
-    def get_options_chain(self, symbol: str, expiration: str) -> Dict[str, Any]:
+    def get_options_chain(self, symbol: str, expiration: str, *, greeks: bool = False) -> Dict[str, Any]:
         r = self.http.get(
-            "markets/options/chains", params={"symbol": symbol, "expiration": expiration}
+            "markets/options/chains",
+            params={
+                "symbol": symbol,
+                "expiration": expiration,
+                "greeks": str(greeks).lower(),
+            },
         )
         self._raise_for_status(r)
         return r.json()
