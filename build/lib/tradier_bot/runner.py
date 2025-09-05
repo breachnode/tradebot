@@ -35,6 +35,7 @@ class PaperRunner:
         poll_seconds: int = 60,
         tp_pct: float = 0.25,
         sl_pct: float = 0.20,
+        starting_capital: float = 100.0,
     ):
         self.client = client
         self.symbol = symbol
@@ -45,6 +46,7 @@ class PaperRunner:
         self.sl_pct = sl_pct
         self.position: Optional[Position] = None
         self.stats = RunStats()
+        self.cash: float = starting_capital
 
     def _select_near_expiry_occ(self, direction: str) -> Optional[str]:
         exps = self.client.get_options_expirations(self.symbol)
@@ -102,11 +104,16 @@ class PaperRunner:
         occ = self._select_near_expiry_occ(direction)
         if not occ:
             return
-        # Simulate entry at $1.00 premium
+        # Simulate entry at $1.00 premium per contract (100x multiplier = $100) if enough cash
         entry_price = 1.00
+        cost = entry_price * 100.0
+        if self.cash < cost:
+            print({"skip": {"reason": "insufficient_cash", "cash": round(self.cash,2), "needed": cost}})
+            return
+        self.cash -= cost
         self.position = Position(direction=direction, entry_price=entry_price, underlying_at_entry=price_now, occ_symbol=occ, quantity=1)
         self.stats.entries += 1
-        print({"enter": {"direction": direction, "occ": occ, "entry_price": entry_price, "underlying": price_now}})
+        print({"enter": {"direction": direction, "occ": occ, "entry_price": entry_price, "underlying": price_now, "cash_after": round(self.cash,2)}})
 
     def _maybe_exit(self, price_now: float):
         if self.position is None:
@@ -117,11 +124,12 @@ class PaperRunner:
         if change >= self.tp_pct or change <= -self.sl_pct:
             pnl = (est_now - pos.entry_price) * pos.quantity * 100.0
             self.stats.realized_pnl += pnl
+            self.cash += (pos.entry_price * 100.0) + pnl
             if pnl >= 0:
                 self.stats.num_wins += 1
             else:
                 self.stats.num_losses += 1
-            print({"exit": {"pnl": pnl, "est_price": est_now, "underlying": price_now, "reason": "tp" if change>=self.tp_pct else "sl"}})
+            print({"exit": {"pnl": pnl, "est_price": est_now, "underlying": price_now, "reason": "tp" if change>=self.tp_pct else "sl", "cash_after": round(self.cash,2)}})
             self.position = None
 
     def run(self):
@@ -141,14 +149,17 @@ class PaperRunner:
             est_now = self._estimate_option_price(pos.direction, last_price, pos.underlying_at_entry, pos.entry_price)
             pnl = (est_now - pos.entry_price) * pos.quantity * 100.0
             self.stats.realized_pnl += pnl
+            self.cash += (pos.entry_price * 100.0) + pnl
             if pnl >= 0:
                 self.stats.num_wins += 1
             else:
                 self.stats.num_losses += 1
-            print({"force_exit": {"pnl": pnl, "est_price": est_now, "underlying": last_price}})
+            print({"force_exit": {"pnl": pnl, "est_price": est_now, "underlying": last_price, "cash_after": round(self.cash,2)}})
             self.position = None
         print({"summary": {
             "pnl": round(self.stats.realized_pnl, 2),
+            "ending_cash": round(self.cash, 2),
+            "return_pct": round(((self.cash - 100.0) / 100.0) * 100.0, 2),
             "entries": self.stats.entries,
             "wins": self.stats.num_wins,
             "losses": self.stats.num_losses,

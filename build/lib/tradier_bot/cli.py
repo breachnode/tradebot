@@ -179,9 +179,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--poll", type=int, default=60, help="Poll seconds")
     p.add_argument("--tp", type=float, default=0.25, help="Take profit percent")
     p.add_argument("--sl", type=float, default=0.20, help="Stop loss percent")
+    p.add_argument("--capital", type=float, default=100.0, help="Starting capital ($)")
     def _run(a):
         client = build_client()
-        PaperRunner(client, a.symbol, a.account, a.minutes, a.poll, a.tp, a.sl).run()
+        PaperRunner(client, a.symbol, a.account, a.minutes, a.poll, a.tp, a.sl, a.capital).run()
     p.set_defaults(func=_run)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
