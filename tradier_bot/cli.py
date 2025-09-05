@@ -236,6 +236,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     p = sub.add_parser("backtest", help="2-year backtest on Yahoo daily bars with $100 start")
     p.add_argument("symbols", nargs="?", default="SPY,QQQ,AAPL,TSLA,NVDA,AMD")
+    p.add_argument("--symbols-file", default=None, help="Path to symbols file (newline or CSV)")
     p.add_argument("--years", type=int, default=2)
     p.add_argument("--capital", type=float, default=100.0)
     p.add_argument("--tp", type=float, default=0.25)
@@ -251,6 +252,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--entry-prem", type=float, default=1.00, help="Base entry premium per contract ($)")
     def _bt(a):
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
+        if a.symbols_file:
+            try:
+                with open(a.symbols_file, 'r') as f:
+                    content = f.read()
+                extra = [s.strip().upper() for s in content.replace('\n', ',').split(',') if s.strip()]
+                syms = list(dict.fromkeys(syms + extra))
+            except Exception as e:
+                print({"warn": f"Failed to read symbols file: {e}"})
         bt = Backtester(
             syms, years=a.years, starting_capital=a.capital, tp_pct=a.tp, sl_pct=a.sl,
             target_delta=a.delta, max_positions=a.maxpos, max_hold_days=a.hold, aggressiveness=a.aggr,
@@ -269,6 +278,78 @@ def main(argv: Optional[list[str]] = None) -> int:
             "cagr_pct": stats.cagr_pct,
         })
     p.set_defaults(func=_bt)
+
+    p = sub.add_parser("backtest-sweep", help="Grid search TP/SL/Hold/Delta/Agg/EntryPrem")
+    p.add_argument("symbols", nargs="?", default="SPY,QQQ,AAPL,TSLA,NVDA,AMD")
+    p.add_argument("--symbols-file", default=None)
+    p.add_argument("--years", type=int, default=2)
+    p.add_argument("--capital", type=float, default=100.0)
+    p.add_argument("--comm", type=float, default=0.35)
+    p.add_argument("--fees", type=float, default=0.00)
+    p.add_argument("--entry-slip", type=float, default=0.05)
+    p.add_argument("--exit-slip", type=float, default=0.05)
+    def _sweep(a):
+        syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
+        if a.symbols_file:
+            try:
+                with open(a.symbols_file, 'r') as f:
+                    content = f.read()
+                extra = [s.strip().upper() for s in content.replace('\n', ',').split(',') if s.strip()]
+                syms = list(dict.fromkeys(syms + extra))
+            except Exception as e:
+                print({"warn": f"Failed to read symbols file: {e}"})
+        # Preload histories to reuse across runs
+        from .backtester import Backtester
+        preload = {}
+        tmp_bt = Backtester(syms, years=a.years, starting_capital=a.capital)
+        for s in syms:
+            preload[s] = tmp_bt._fetch_history(s)
+        grids = {
+            "tp": [0.15, 0.20, 0.25],
+            "sl": [0.20, 0.30, 0.35],
+            "delta": [0.25, 0.30, 0.35],
+            "hold": [5, 10, 15],
+            "aggr": [0.6, 0.8, 0.95],
+            "entry": [0.60, 0.80, 1.00],
+        }
+        best = None
+        best_stat = -1e9
+        results = []
+        for tp in grids["tp"]:
+            for sl in grids["sl"]:
+                for delta in grids["delta"]:
+                    for hold in grids["hold"]:
+                        for ag in grids["aggr"]:
+                            for ent in grids["entry"]:
+                                bt = Backtester(
+                                    syms, years=a.years, starting_capital=a.capital, tp_pct=tp, sl_pct=sl,
+                                    target_delta=delta, max_positions=1, max_hold_days=hold, aggressiveness=ag,
+                                    commission_per_contract=a.comm, fees_per_contract=a.fees,
+                                    entry_slippage_frac=a.entry_slip, exit_slippage_frac=a.exit_slip,
+                                    base_entry_premium=ent, histories_override=preload
+                                )
+                                st = bt.run()
+                                score = st.ending_cash  # simple objective
+                                cfg = {"tp": tp, "sl": sl, "delta": delta, "hold": hold, "aggr": ag, "entry": ent}
+                                results.append((score, cfg, st))
+                                if score > best_stat:
+                                    best_stat = score
+                                    best = (cfg, st)
+        # Print top 5
+        results.sort(key=lambda x: x[0], reverse=True)
+        top = results[:5]
+        print({"best": {"config": top[0][1], "stats": {
+            "ending_cash": top[0][2].ending_cash,
+            "pnl": top[0][2].realized_pnl,
+            "trades": top[0][2].trades,
+            "wins": top[0][2].wins,
+            "losses": top[0][2].losses,
+            "mdd": top[0][2].max_drawdown_pct,
+            "cagr": top[0][2].cagr_pct,
+        }}})
+        for _, cfg, st in top[1:]:
+            print({"alt": {"config": cfg, "ending_cash": st.ending_cash, "cagr": st.cagr_pct}})
+    p.set_defaults(func=_sweep)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
     p.add_argument("account", help="Account ID")

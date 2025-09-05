@@ -6,6 +6,10 @@ import statistics
 import datetime as dt
 
 import yfinance as yf
+try:
+    import pandas as pd  # type: ignore
+except Exception:
+    pd = None  # yfinance will still return DataFrames; used only for typing
 
 
 @dataclass
@@ -48,6 +52,7 @@ class Backtester:
         entry_slippage_frac: float = 0.05,
         exit_slippage_frac: float = 0.05,
         base_entry_premium: float = 1.00,
+        histories_override: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.symbols = symbols
         self.starting_capital = starting_capital
@@ -62,6 +67,7 @@ class Backtester:
         self.entry_slip = max(0.0, entry_slippage_frac)
         self.exit_slip = max(0.0, exit_slippage_frac)
         self.base_entry = max(0.01, base_entry_premium)
+        self._histories = histories_override
 
         self.cash = starting_capital
         self.positions: List[BtPosition] = []
@@ -76,6 +82,8 @@ class Backtester:
         self.end_date = end
 
     def _fetch_history(self, symbol: str):
+        if self._histories is not None and symbol in self._histories:
+            return self._histories[symbol]
         df = yf.Ticker(symbol).history(start=self.start_date, end=self.end_date, interval="1d")
         return df
 
