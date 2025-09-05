@@ -7,6 +7,7 @@ from .config import load_config
 from .http import HttpClient
 from .tradier import TradierClient
 from .runner import PaperRunner
+from .live_runner import LiveRunner
 
 
 def build_client() -> TradierClient:
@@ -184,6 +185,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         client = build_client()
         PaperRunner(client, a.symbol, a.account, a.minutes, a.poll, a.tp, a.sl, a.capital).run()
     p.set_defaults(func=_run)
+
+    p = sub.add_parser("live-run", help="Live sandbox runner: multi-symbol momentum with TP/SL")
+    p.add_argument("account", help="Account ID")
+    p.add_argument("symbols", help="CSV of underlyings, e.g., SPY,QQQ,AAPL")
+    p.add_argument("--minutes", type=int, default=30)
+    p.add_argument("--poll", type=int, default=30)
+    p.add_argument("--tp", type=float, default=0.25)
+    p.add_argument("--sl", type=float, default=0.20)
+    p.add_argument("--capital", type=float, default=100.0)
+    p.add_argument("--maxpos", type=int, default=1)
+    p.add_argument("--delta", type=float, default=0.30)
+    def _live(a):
+        client = build_client()
+        syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
+        LiveRunner(client, a.account, syms, a.capital, a.minutes, a.poll, a.tp, a.sl, a.maxpos, a.delta).run()
+    p.set_defaults(func=_live)
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
     p.add_argument("account", help="Account ID")
