@@ -1,0 +1,286 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import List, Optional, Dict, Any
+import math
+import statistics
+import datetime as dt
+
+import yfinance as yf
+try:
+    import pandas as pd  # type: ignore
+except Exception:
+    pd = None  # yfinance will still return DataFrames; used only for typing
+
+
+@dataclass
+class BtPosition:
+    symbol: str
+    direction: str  # call | put
+    entry_underlying: float
+    entry_premium: float
+    entry_date: dt.date
+    quantity: int = 1
+
+
+@dataclass
+class BtStats:
+    starting_capital: float
+    ending_cash: float
+    realized_pnl: float
+    trades: int
+    wins: int
+    losses: int
+    max_drawdown_pct: float
+    cagr_pct: float
+
+
+class Backtester:
+    def __init__(
+        self,
+        symbols: List[str],
+        *,
+        years: int = 2,
+        starting_capital: float = 100.0,
+        tp_pct: float = 0.25,
+        sl_pct: float = 0.20,
+        target_delta: float = 0.30,
+        max_positions: int = 1,
+        max_hold_days: int = 10,
+        aggressiveness: float = 0.6,
+        commission_per_contract: float = 0.35,
+        fees_per_contract: float = 0.00,
+        entry_slippage_frac: float = 0.05,
+        exit_slippage_frac: float = 0.05,
+        base_entry_premium: float = 1.00,
+        histories_override: Optional[Dict[str, Any]] = None,
+        reinvestment_rate: float = 0.5,
+        reinvest_tier_threshold: float = 1000.0,
+        reinvest_rate_below: float = 1.0,
+        reinvest_rate_above: float = 0.5,
+    ) -> None:
+        self.symbols = symbols
+        self.starting_capital = starting_capital
+        self.tp_pct = tp_pct
+        self.sl_pct = sl_pct
+        self.target_delta = target_delta
+        self.max_positions = max_positions
+        self.max_hold_days = max_hold_days
+        self.aggressiveness = max(0.0, min(1.0, aggressiveness))
+        self.commission = max(0.0, commission_per_contract)
+        self.fees = max(0.0, fees_per_contract)
+        self.entry_slip = max(0.0, entry_slippage_frac)
+        self.exit_slip = max(0.0, exit_slippage_frac)
+        self.base_entry = max(0.01, base_entry_premium)
+        self._histories = histories_override
+        # Use at least 50% reinvestment, cap at 100%
+        self.reinvest = max(0.0, min(1.0, reinvestment_rate))
+        self.reinvest_tier_threshold = max(0.0, reinvest_tier_threshold)
+        self.reinvest_rate_below = max(0.0, min(1.0, reinvest_rate_below))
+        self.reinvest_rate_above = max(0.0, min(1.0, reinvest_rate_above))
+
+        self.cash = starting_capital
+        self.positions: List[BtPosition] = []
+        self.trades = 0
+        self.wins = 0
+        self.losses = 0
+        self.equity_curve: List[float] = []
+
+        end = dt.date.today()
+        start = end - dt.timedelta(days=365 * years + 10)
+        self.start_date = start
+        self.end_date = end
+
+    def _fetch_history(self, symbol: str):
+        if self._histories is not None and symbol in self._histories:
+            return self._histories[symbol]
+        df = yf.Ticker(symbol).history(start=self.start_date, end=self.end_date, interval="1d")
+        return df
+
+    @staticmethod
+    def _sma(values: List[float], n: int) -> Optional[float]:
+        if len(values) < n:
+            return None
+        return statistics.fmean(values[-n:])
+
+    def _signal(self, closes: List[float]) -> Optional[str]:
+        if len(closes) < 20:
+            return None
+        short = self._sma(closes, 3)
+        long = self._sma(closes, 9)
+        recent_high = max(closes[-20:])
+        recent_low = min(closes[-20:])
+        last = closes[-1]
+        up_thresh = 1.0 + (0.001 * (1.0 - self.aggressiveness))
+        down_thresh = 1.0 - (0.001 * (1.0 - self.aggressiveness))
+        if short is not None and long is not None:
+            if short > long * up_thresh:
+                return "call"
+            if short < long * down_thresh:
+                return "put"
+        breakout_pad = 0.0005 * (1.0 - self.aggressiveness)
+        if last >= recent_high * (1.0 - breakout_pad):
+            return "call"
+        if last <= recent_low * (1.0 + breakout_pad):
+            return "put"
+        return None
+
+    def _estimate_option_price(self, direction: str, underlying_now: float, underlying_entry: float, entry_price: float) -> float:
+        approx_delta = self.target_delta
+        move = underlying_now - underlying_entry
+        if direction == "put":
+            move = -move
+        est = entry_price + approx_delta * move
+        return max(est, 0.01)
+
+    def _update_equity(self, date_idx_prices: Dict[str, float]):
+        # Estimate value of open positions at today's close and record equity
+        unrealized = 0.0
+        for p in self.positions:
+            u_now = date_idx_prices.get(p.symbol, p.entry_underlying)
+            est = self._estimate_option_price(p.direction, u_now, p.entry_underlying, p.entry_premium)
+            unrealized += est * 100.0 * p.quantity
+        self.equity_curve.append(self.cash + unrealized)
+
+    def run(self) -> BtStats:
+        # Download histories for all symbols
+        histories: Dict[str, Any] = {}
+        all_dates: List[dt.date] = []
+        for s in self.symbols:
+            df = self._fetch_history(s)
+            if df is None or df.empty:
+                continue
+            df = df.dropna()
+            histories[s] = df
+            all_dates.extend([d.date() for d in df.index])
+        if not histories:
+            return BtStats(self.starting_capital, self.cash, 0.0, 0, 0, 0, 0.0, 0.0)
+        # Build sorted unique date index
+        all_dates = sorted(set(all_dates))
+
+        # Dict of trailing closes for signals
+        trailing: Dict[str, List[float]] = {s: [] for s in histories.keys()}
+
+        for d in all_dates:
+            # Build per-day close map
+            day_prices: Dict[str, float] = {}
+            for s, df in histories.items():
+                if d in [idx.date() for idx in df.index]:
+                    # get row by date
+                    row = df.loc[str(d)]
+                    # row may be Series or DataFrame for multi rows
+                    close = None
+                    if hasattr(row, "__len__") and "Close" in row:
+                        # single row Series
+                        close = float(row["Close"]) if not hasattr(row["Close"], "iloc") else float(row["Close"].iloc[0])
+                    else:
+                        try:
+                            close = float(df.loc[str(d)]["Close"])  # fallback
+                        except Exception:
+                            pass
+                    if close is not None:
+                        trailing[s].append(close)
+                        day_prices[s] = close
+
+            # Exit logic first
+            remaining_positions: List[BtPosition] = []
+            for p in self.positions:
+                u_now = day_prices.get(p.symbol, p.entry_underlying)
+                est = self._estimate_option_price(p.direction, u_now, p.entry_underlying, p.entry_premium)
+                change = (est - p.entry_premium) / p.entry_premium
+                days_held = (d - p.entry_date).days
+                should_exit = change >= self.tp_pct or change <= -self.sl_pct or days_held >= self.max_hold_days
+                if should_exit:
+                    # Apply exit slippage and commissions/fees
+                    effective_exit = est * (1.0 - self.exit_slip)
+                    proceeds = effective_exit * 100.0 * p.quantity - (self.commission + self.fees) * p.quantity
+                    # Entry cash already deducted with slippage and costs, so pnl realized by adding proceeds back
+                    self.cash += proceeds
+                    self.trades += 1
+                    pnl = proceeds - (p.entry_premium * 100.0 * p.quantity)
+                    if pnl >= (self.commission + self.fees) * p.quantity:
+                        self.wins += 1
+                    else:
+                        self.losses += 1
+                else:
+                    remaining_positions.append(p)
+            self.positions = remaining_positions
+
+            # Entry logic if capacity
+            if len(self.positions) < self.max_positions:
+                for s, closes in trailing.items():
+                    if s not in day_prices:
+                        continue
+                    signal = self._signal(closes)
+                    if not signal:
+                        continue
+                    # Determine quantity using reinvestment of available cash
+                    base_entry = self.base_entry
+                    effective_entry = self.base_entry * (1.0 + self.entry_slip)
+                    cost_per_contract = effective_entry * 100.0 + (self.commission + self.fees)
+                    if self.cash < cost_per_contract:
+                        continue
+                    reinvest_frac = self.reinvest_rate_below if self.cash < self.reinvest_tier_threshold else self.reinvest_rate_above
+                    target_allocation = self.cash * reinvest_frac
+                    qty = int(target_allocation // cost_per_contract)
+                    if qty < 1:
+                        qty = 1
+                    # Safety cap to avoid unrealistic leverage
+                    qty = max(1, qty)
+                    spent = cost_per_contract * qty
+                    if spent > self.cash:
+                        # fallback to max affordable
+                        qty = int(self.cash // cost_per_contract)
+                        if qty < 1:
+                            continue
+                        spent = cost_per_contract * qty
+                    self.cash -= spent
+                    self.positions.append(
+                        BtPosition(symbol=s, direction=signal, entry_underlying=closes[-1], entry_premium=base_entry, entry_date=d, quantity=qty)
+                    )
+                    # One new position per day
+                    break
+
+            # Equity update
+            self._update_equity(day_prices)
+
+        # Close any open at last price
+        if self.positions:
+            # Use last available prices in day_prices from last loop
+            last_prices = {s: trailing[s][-1] for s in trailing if trailing[s]}
+            for p in self.positions:
+                u_now = last_prices.get(p.symbol, p.entry_underlying)
+                est = self._estimate_option_price(p.direction, u_now, p.entry_underlying, p.entry_premium)
+                effective_exit = est * (1.0 - self.exit_slip)
+                proceeds = effective_exit * 100.0 * p.quantity - (self.commission + self.fees) * p.quantity
+                self.cash += proceeds
+                self.trades += 1
+                pnl = proceeds - (p.entry_premium * 100.0 * p.quantity)
+                if pnl >= (self.commission + self.fees) * p.quantity:
+                    self.wins += 1
+                else:
+                    self.losses += 1
+            self.positions.clear()
+
+        # Metrics
+        ending_cash = self.cash
+        realized_pnl = ending_cash - self.starting_capital
+        peak = -1e9
+        max_dd = 0.0
+        for eq in self.equity_curve:
+            peak = max(peak, eq)
+            if peak > 0:
+                dd = (peak - eq) / peak
+                max_dd = max(max_dd, dd)
+        years = max(0.0001, (self.end_date - self.start_date).days / 365.0)
+        cagr = (ending_cash / self.starting_capital) ** (1.0 / years) - 1.0 if ending_cash > 0 else -1.0
+        return BtStats(
+            starting_capital=self.starting_capital,
+            ending_cash=round(ending_cash, 2),
+            realized_pnl=round(realized_pnl, 2),
+            trades=self.trades,
+            wins=self.wins,
+            losses=self.losses,
+            max_drawdown_pct=round(max_dd * 100.0, 2),
+            cagr_pct=round(cagr * 100.0, 2),
+        )
+
