@@ -43,6 +43,11 @@ class Backtester:
         max_positions: int = 1,
         max_hold_days: int = 10,
         aggressiveness: float = 0.6,
+        commission_per_contract: float = 0.35,
+        fees_per_contract: float = 0.00,
+        entry_slippage_frac: float = 0.05,
+        exit_slippage_frac: float = 0.05,
+        base_entry_premium: float = 1.00,
     ) -> None:
         self.symbols = symbols
         self.starting_capital = starting_capital
@@ -52,6 +57,11 @@ class Backtester:
         self.max_positions = max_positions
         self.max_hold_days = max_hold_days
         self.aggressiveness = max(0.0, min(1.0, aggressiveness))
+        self.commission = max(0.0, commission_per_contract)
+        self.fees = max(0.0, fees_per_contract)
+        self.entry_slip = max(0.0, entry_slippage_frac)
+        self.exit_slip = max(0.0, exit_slippage_frac)
+        self.base_entry = max(0.01, base_entry_premium)
 
         self.cash = starting_capital
         self.positions: List[BtPosition] = []
@@ -163,10 +173,14 @@ class Backtester:
                 days_held = (d - p.entry_date).days
                 should_exit = change >= self.tp_pct or change <= -self.sl_pct or days_held >= self.max_hold_days
                 if should_exit:
-                    pnl = (est - p.entry_premium) * 100.0 * p.quantity
-                    self.cash += (p.entry_premium * 100.0 * p.quantity) + pnl
+                    # Apply exit slippage and commissions/fees
+                    effective_exit = est * (1.0 - self.exit_slip)
+                    proceeds = effective_exit * 100.0 * p.quantity - (self.commission + self.fees) * p.quantity
+                    # Entry cash already deducted with slippage and costs, so pnl realized by adding proceeds back
+                    self.cash += proceeds
                     self.trades += 1
-                    if pnl >= 0:
+                    pnl = proceeds - (p.entry_premium * 100.0 * p.quantity)
+                    if pnl >= (self.commission + self.fees) * p.quantity:
                         self.wins += 1
                     else:
                         self.losses += 1
@@ -182,12 +196,14 @@ class Backtester:
                     signal = self._signal(closes)
                     if not signal:
                         continue
-                    # can we afford one contract at $1.00?
-                    cost = 100.0
-                    if self.cash >= cost:
-                        self.cash -= cost
+                    # can we afford one contract at $1.00 with costs and slippage?
+                    base_entry = self.base_entry
+                    effective_entry = self.base_entry * (1.0 + self.entry_slip)
+                    total_cost = effective_entry * 100.0 + (self.commission + self.fees)
+                    if self.cash >= total_cost:
+                        self.cash -= total_cost
                         self.positions.append(
-                            BtPosition(symbol=s, direction=signal, entry_underlying=closes[-1], entry_premium=1.00, entry_date=d)
+                            BtPosition(symbol=s, direction=signal, entry_underlying=closes[-1], entry_premium=base_entry, entry_date=d)
                         )
                         # One position per day
                         break
@@ -202,10 +218,12 @@ class Backtester:
             for p in self.positions:
                 u_now = last_prices.get(p.symbol, p.entry_underlying)
                 est = self._estimate_option_price(p.direction, u_now, p.entry_underlying, p.entry_premium)
-                pnl = (est - p.entry_premium) * 100.0 * p.quantity
-                self.cash += (p.entry_premium * 100.0 * p.quantity) + pnl
+                effective_exit = est * (1.0 - self.exit_slip)
+                proceeds = effective_exit * 100.0 * p.quantity - (self.commission + self.fees) * p.quantity
+                self.cash += proceeds
                 self.trades += 1
-                if pnl >= 0:
+                pnl = proceeds - (p.entry_premium * 100.0 * p.quantity)
+                if pnl >= (self.commission + self.fees) * p.quantity:
                     self.wins += 1
                 else:
                     self.losses += 1

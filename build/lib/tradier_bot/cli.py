@@ -244,9 +244,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--maxpos", type=int, default=1)
     p.add_argument("--hold", type=int, default=10, help="Max hold days")
     p.add_argument("--aggr", type=float, default=0.6)
+    p.add_argument("--comm", type=float, default=0.35, help="Commission per contract")
+    p.add_argument("--fees", type=float, default=0.00, help="Fees per contract")
+    p.add_argument("--entry-slip", type=float, default=0.05, help="Entry slippage fraction")
+    p.add_argument("--exit-slip", type=float, default=0.05, help="Exit slippage fraction")
+    p.add_argument("--entry-prem", type=float, default=1.00, help="Base entry premium per contract ($)")
     def _bt(a):
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
-        bt = Backtester(syms, years=a.years, starting_capital=a.capital, tp_pct=a.tp, sl_pct=a.sl, target_delta=a.delta, max_positions=a.maxpos, max_hold_days=a.hold, aggressiveness=a.aggr)
+        bt = Backtester(
+            syms, years=a.years, starting_capital=a.capital, tp_pct=a.tp, sl_pct=a.sl,
+            target_delta=a.delta, max_positions=a.maxpos, max_hold_days=a.hold, aggressiveness=a.aggr,
+            commission_per_contract=a.comm, fees_per_contract=a.fees, entry_slippage_frac=a.entry_slip, exit_slippage_frac=a.exit_slip,
+            base_entry_premium=a.entry_prem
+        )
         stats = bt.run()
         print({
             "starting_capital": stats.starting_capital,
