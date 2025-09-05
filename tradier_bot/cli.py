@@ -48,6 +48,7 @@ def cmd_preview(args):
     client = build_client()
     data = client.preview_option_order(
         account_id=args.account,
+        underlying_symbol=args.symbol,
         option_symbol=args.option_symbol,
         side=args.side,
         quantity=args.quantity,
@@ -89,6 +90,7 @@ def cmd_test_trade(args):
     # 3) Preview order
     preview = client.preview_option_order(
         account_id=args.account,
+        underlying_symbol=args.symbol,
         option_symbol=occ_symbol,
         side=args.side,
         quantity=args.quantity,
@@ -101,6 +103,7 @@ def cmd_test_trade(args):
     # 4) Place order (non-filling suggested: limit far from market if price provided)
     placed = client.place_option_order(
         account_id=args.account,
+        underlying_symbol=args.symbol,
         option_symbol=occ_symbol,
         side=args.side,
         quantity=args.quantity,
@@ -116,9 +119,17 @@ def cmd_test_trade(args):
     ) or placed.get("id")
     if not order_id:
         raise RuntimeError(f"No order id in response: {placed}")
-
-    cancelled = client.cancel_order(args.account, str(order_id))
-    print({"cancelled": cancelled})
+    # Try a short poll before cancel to let the order register
+    try:
+        status = client.get_order_status(args.account, str(order_id))
+        print({"status": status})
+    except Exception as _:
+        pass
+    try:
+        cancelled = client.cancel_order(args.account, str(order_id))
+        print({"cancelled": cancelled})
+    except Exception as exc:
+        print({"cancel_error": str(exc)})
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -146,6 +157,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     p = sub.add_parser("preview", help="Preview option order")
     p.add_argument("account", help="Account ID")
+    p.add_argument("symbol", help="Underlying symbol, e.g., SPY")
     p.add_argument("option_symbol", help="OCC option symbol, e.g., SPY250905C00450000")
     p.add_argument("side", choices=["buy_to_open", "sell_to_close", "sell_to_open", "buy_to_close"], help="Order side")
     p.add_argument("quantity", type=int)
@@ -153,6 +165,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--price", type=float, default=None)
     p.add_argument("--duration", default="day", choices=["day", "gtc", "pre", "post"], help="Order duration")
     p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("order-status", help="Get order status")
+    p.add_argument("account", help="Account ID")
+    p.add_argument("order_id", help="Order ID")
+    p.set_defaults(func=lambda a: print(build_client().get_order_status(a.account, a.order_id)))
 
     p = sub.add_parser("test-trade", help="Sandbox test: pick ATM, preview, place, cancel")
     p.add_argument("account", help="Account ID")

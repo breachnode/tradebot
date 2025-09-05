@@ -54,6 +54,7 @@ class TradierClient:
     def preview_option_order(
         self,
         account_id: str,
+        underlying_symbol: str,
         option_symbol: str,
         side: str,
         quantity: int,
@@ -63,7 +64,8 @@ class TradierClient:
     ) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "class": "option",
-            "symbol": option_symbol,
+            "symbol": underlying_symbol,
+            "option_symbol": option_symbol,
             "side": side,
             "quantity": quantity,
             "type": order_type,
@@ -80,6 +82,7 @@ class TradierClient:
     def place_option_order(
         self,
         account_id: str,
+        underlying_symbol: str,
         option_symbol: str,
         side: str,
         quantity: int,
@@ -89,7 +92,8 @@ class TradierClient:
     ) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "class": "option",
-            "symbol": option_symbol,
+            "symbol": underlying_symbol,
+            "option_symbol": option_symbol,
             "side": side,
             "quantity": quantity,
             "type": order_type,
@@ -104,6 +108,11 @@ class TradierClient:
 
     def cancel_order(self, account_id: str, order_id: str) -> Dict[str, Any]:
         r = self.http.delete(f"accounts/{account_id}/orders/{order_id}")
+        self._raise_for_status(r)
+        return r.json()
+
+    def get_order_status(self, account_id: str, order_id: str) -> Dict[str, Any]:
+        r = self.http.get(f"accounts/{account_id}/orders/{order_id}")
         self._raise_for_status(r)
         return r.json()
 
