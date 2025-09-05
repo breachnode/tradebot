@@ -250,6 +250,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--entry-slip", type=float, default=0.05, help="Entry slippage fraction")
     p.add_argument("--exit-slip", type=float, default=0.05, help="Exit slippage fraction")
     p.add_argument("--entry-prem", type=float, default=1.00, help="Base entry premium per contract ($)")
+    p.add_argument("--reinvest", type=float, default=0.5, help="Fraction of available cash to reinvest per trade (0.5-1.0)")
     def _bt(a):
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
         if a.symbols_file:
@@ -264,7 +265,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             syms, years=a.years, starting_capital=a.capital, tp_pct=a.tp, sl_pct=a.sl,
             target_delta=a.delta, max_positions=a.maxpos, max_hold_days=a.hold, aggressiveness=a.aggr,
             commission_per_contract=a.comm, fees_per_contract=a.fees, entry_slippage_frac=a.entry_slip, exit_slippage_frac=a.exit_slip,
-            base_entry_premium=a.entry_prem
+            base_entry_premium=a.entry_prem, reinvestment_rate=a.reinvest
         )
         stats = bt.run()
         print({
@@ -288,6 +289,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--fees", type=float, default=0.00)
     p.add_argument("--entry-slip", type=float, default=0.05)
     p.add_argument("--exit-slip", type=float, default=0.05)
+    p.add_argument("--reinvest", type=float, default=0.5)
     def _sweep(a):
         syms = [s.strip().upper() for s in a.symbols.split(',') if s.strip()]
         if a.symbols_file:
@@ -311,6 +313,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "hold": [5, 10, 15],
             "aggr": [0.6, 0.8, 0.95],
             "entry": [0.60, 0.80, 1.00],
+            "reinv": [0.5, 0.75, 1.0],
         }
         best = None
         best_stat = -1e9
@@ -321,20 +324,21 @@ def main(argv: Optional[list[str]] = None) -> int:
                     for hold in grids["hold"]:
                         for ag in grids["aggr"]:
                             for ent in grids["entry"]:
-                                bt = Backtester(
-                                    syms, years=a.years, starting_capital=a.capital, tp_pct=tp, sl_pct=sl,
-                                    target_delta=delta, max_positions=1, max_hold_days=hold, aggressiveness=ag,
-                                    commission_per_contract=a.comm, fees_per_contract=a.fees,
-                                    entry_slippage_frac=a.entry_slip, exit_slippage_frac=a.exit_slip,
-                                    base_entry_premium=ent, histories_override=preload
-                                )
-                                st = bt.run()
-                                score = st.ending_cash  # simple objective
-                                cfg = {"tp": tp, "sl": sl, "delta": delta, "hold": hold, "aggr": ag, "entry": ent}
-                                results.append((score, cfg, st))
-                                if score > best_stat:
-                                    best_stat = score
-                                    best = (cfg, st)
+                                for reinv in grids["reinv"]:
+                                    bt = Backtester(
+                                        syms, years=a.years, starting_capital=a.capital, tp_pct=tp, sl_pct=sl,
+                                        target_delta=delta, max_positions=1, max_hold_days=hold, aggressiveness=ag,
+                                        commission_per_contract=a.comm, fees_per_contract=a.fees,
+                                        entry_slippage_frac=a.entry_slip, exit_slippage_frac=a.exit_slip,
+                                        base_entry_premium=ent, histories_override=preload, reinvestment_rate=reinv
+                                    )
+                                    st = bt.run()
+                                    score = st.ending_cash  # simple objective
+                                    cfg = {"tp": tp, "sl": sl, "delta": delta, "hold": hold, "aggr": ag, "entry": ent, "reinvest": reinv}
+                                    results.append((score, cfg, st))
+                                    if score > best_stat:
+                                        best_stat = score
+                                        best = (cfg, st)
         # Print top 5
         results.sort(key=lambda x: x[0], reverse=True)
         top = results[:5]

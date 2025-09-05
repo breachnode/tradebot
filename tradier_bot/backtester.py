@@ -53,6 +53,7 @@ class Backtester:
         exit_slippage_frac: float = 0.05,
         base_entry_premium: float = 1.00,
         histories_override: Optional[Dict[str, Any]] = None,
+        reinvestment_rate: float = 0.5,
     ) -> None:
         self.symbols = symbols
         self.starting_capital = starting_capital
@@ -68,6 +69,8 @@ class Backtester:
         self.exit_slip = max(0.0, exit_slippage_frac)
         self.base_entry = max(0.01, base_entry_premium)
         self._histories = histories_override
+        # Use at least 50% reinvestment, cap at 100%
+        self.reinvest = max(0.5, min(1.0, reinvestment_rate))
 
         self.cash = starting_capital
         self.positions: List[BtPosition] = []
@@ -204,17 +207,31 @@ class Backtester:
                     signal = self._signal(closes)
                     if not signal:
                         continue
-                    # can we afford one contract at $1.00 with costs and slippage?
+                    # Determine quantity using reinvestment of available cash
                     base_entry = self.base_entry
                     effective_entry = self.base_entry * (1.0 + self.entry_slip)
-                    total_cost = effective_entry * 100.0 + (self.commission + self.fees)
-                    if self.cash >= total_cost:
-                        self.cash -= total_cost
-                        self.positions.append(
-                            BtPosition(symbol=s, direction=signal, entry_underlying=closes[-1], entry_premium=base_entry, entry_date=d)
-                        )
-                        # One position per day
-                        break
+                    cost_per_contract = effective_entry * 100.0 + (self.commission + self.fees)
+                    if self.cash < cost_per_contract:
+                        continue
+                    target_allocation = self.cash * self.reinvest
+                    qty = int(target_allocation // cost_per_contract)
+                    if qty < 1:
+                        qty = 1
+                    # Safety cap to avoid unrealistic leverage
+                    qty = max(1, qty)
+                    spent = cost_per_contract * qty
+                    if spent > self.cash:
+                        # fallback to max affordable
+                        qty = int(self.cash // cost_per_contract)
+                        if qty < 1:
+                            continue
+                        spent = cost_per_contract * qty
+                    self.cash -= spent
+                    self.positions.append(
+                        BtPosition(symbol=s, direction=signal, entry_underlying=closes[-1], entry_premium=base_entry, entry_date=d, quantity=qty)
+                    )
+                    # One new position per day
+                    break
 
             # Equity update
             self._update_equity(day_prices)
