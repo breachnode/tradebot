@@ -1,0 +1,7 @@
+version: '3.9'
+services:
+  deriv-bot:
+    build: .
+    env_file: .env
+    command: ["python", "bot/executor.py"]
+    restart: unless-stopped
