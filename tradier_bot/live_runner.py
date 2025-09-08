@@ -193,8 +193,8 @@ class LiveRunner:
         if self.cash < cost_per_contract:
             print({"skip": {"symbol": symbol, "reason": "insufficient_cash", "cash": round(self.cash,2), "needed": cost_per_contract}})
             return None
-        # Determine dynamic reinvestment fraction using tiered logic
-        reinvest_frac = self.reinvest_rate_below if self.cash < self.reinvest_tier_threshold else self.reinvest_rate_above
+        # Always reinvest 100% of available cash
+        reinvest_frac = 1.0
         target_allocation = self.cash * reinvest_frac
         qty = int(target_allocation // cost_per_contract)
         if qty < 1:
